@@ -83,14 +83,6 @@ class GenerationEvalCallback(TrainerCallback):
 
 def main(args):
         
-    # model_name = parse_model_name(args.base_model, args.from_remote)
-    
-    # # load model
-    # model = AutoModelForCausalLM.from_pretrained(
-    #     model_name,
-    #     # load_in_8bit=True,
-    #     trust_remote_code=True
-    # )
     model_dir = snapshot_download("modelscope/Llama-2-7b-chat-ms", revision='v1.0.5', 
                               ignore_file_pattern=[r'.+\.bin$'])
     tokenizer = Llama2Tokenizer.from_pretrained(model_dir)
@@ -98,19 +90,8 @@ def main(args):
     if args.local_rank == 0:
         print(model)
     
-    # tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
-    
-    # load data
-    # dataset_list = load_dataset(args.dataset, args.from_remote)
-    
-    # dataset_train = datasets.concatenate_datasets([d['train'] for d in dataset_list]).shuffle(seed=42)
-    
-    # if args.test_dataset:
-    #     dataset_list = load_dataset(args.test_dataset, args.from_remote)
-            
-    # dataset_test = datasets.concatenate_datasets([d['test'] for d in dataset_list])
 
     loaded_dataset = datasets.load_from_disk("./SZdata0413/fingpt-forecaster-sz50-20230201-20240101-1-2-08")
 
@@ -130,7 +111,7 @@ def main(args):
     formatted_time = current_time.strftime('%Y%m%d%H%M')
     
     training_args = TrainingArguments(
-        output_dir=f'finetuned_models/{args.run_name}_{formatted_time}', # 保存位置
+        output_dir=f'finetuned_models/{args.run_name}_{formatted_time}',
         logging_steps=args.log_interval,
         num_train_epochs=args.num_epochs,
         per_device_train_batch_size=args.batch_size,
