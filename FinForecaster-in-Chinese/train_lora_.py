@@ -1,5 +1,5 @@
 from transformers.integrations import TensorBoardCallback
-from transformers import AutoTokenizer, AutoModel, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModel, AutoModelForCausalLM, BitsAndBytesConfig
 from transformers import TrainingArguments, Trainer, DataCollatorForSeq2Seq
 from transformers import TrainerCallback, TrainerState, TrainerControl
 from transformers.trainer import TRAINING_ARGS_NAME
@@ -15,9 +15,6 @@ from datetime import datetime
 from functools import partial
 from tqdm import tqdm
 from utils import *
-import torch
-from modelscope import Model, snapshot_download
-from modelscope.models.nlp.llama2 import Llama2Tokenizer
 
 # LoRA
 from peft import (
@@ -25,14 +22,17 @@ from peft import (
     LoraConfig,
     get_peft_model,
     get_peft_model_state_dict,
-    prepare_model_for_int8_training,
     set_peft_model_state_dict,   
 )
 
 # Replace with your own api_key and project name
-os.environ['WANDB_API_KEY'] = '91ac2e4b3699c5059d50a154a72aa46e70392064'
-os.environ['WANDB_PROJECT'] = 'fingpt-forecaster-Ashare-demo'
-
+os.environ['WANDB_API_KEY'] = 'WANDB_API'
+# config for one gpu deepspeed env
+os.environ['MASTER_ADDR'] = 'localhost'
+os.environ['MASTER_PORT'] = '9994'  # Modify if necessary
+os.environ['RANK'] = "0"
+os.environ['LOCAL_RANK'] = "0"
+os.environ['WORLD_SIZE'] = "1"
 
 class GenerationEvalCallback(TrainerCallback):
     
@@ -83,22 +83,26 @@ class GenerationEvalCallback(TrainerCallback):
 
 def main(args):
         
-    model_dir = snapshot_download("modelscope/Llama-2-7b-chat-ms", revision='v1.0.5', 
-                              ignore_file_pattern=[r'.+\.bin$'])
-    tokenizer = Llama2Tokenizer.from_pretrained(model_dir)
-    model = Model.from_pretrained(model_dir)
+    model_name = parse_model_name(args.base_model, args.from_remote)
+
+    # load model
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        load_in_8bit=True,
+        # quantization_config = q_config,
+        trust_remote_code=True
+    )
     if args.local_rank == 0:
         print(model)
     
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
-
-    loaded_dataset = datasets.load_from_disk("./SZdata0413/fingpt-forecaster-sz50-20230201-20240101-1-2-08")
-
-    original_dataset = datasets.DatasetDict({'train': loaded_dataset["train"], 'test': loaded_dataset["test"]})
-
-    eval_dataset = original_dataset['test'].shuffle(seed=42).select(range(20))
-
+    
+    # load data
+    original_dataset = datasets.load_from_disk("./SZdata0416/fingpt-forecaster-sz50-20230201-20240101-1-2-08")
+    
+    eval_dataset = original_dataset['test'].shuffle(seed=42).select(range(10))
     dataset = original_dataset.map(partial(tokenize, args, tokenizer))
     print('original dataset length: ', len(dataset['train']))
     dataset = dataset.filter(lambda x: not x['exceed_max_length'])
@@ -106,7 +110,6 @@ def main(args):
     dataset = dataset.remove_columns(
         ['prompt', 'answer', 'label', 'symbol', 'period', 'exceed_max_length']
     )
-    
     current_time = datetime.now()
     formatted_time = current_time.strftime('%Y%m%d%H%M')
     
@@ -134,11 +137,9 @@ def main(args):
     
     model.gradient_checkpointing_enable()
     model.enable_input_require_grads()
-    model.is_parallelizable = True
-    model.model_parallel = True
+    # model.is_parallelizable = True
+    # model.model_parallel = True
     model.model.config.use_cache = False
-    
-    # model = prepare_model_for_int8_training(model)
 
     # setup peft
     peft_config = LoraConfig(
@@ -185,10 +186,10 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser()
     parser.add_argument("--local_rank", default=0, type=int)
-    parser.add_argument("--run_name", default='local-test', type=str)
-    parser.add_argument("--dataset", required=True, type=str)
-    parser.add_argument("--test_dataset", type=str)
-    parser.add_argument("--base_model", required=True, type=str, choices=['chatglm2', 'llama2'])
+    parser.add_argument("--run_name", default='expe0416', type=str)
+    # parser.add_argument("--dataset", required=True, type=str)
+    # parser.add_argument("--test_dataset", type=str)
+    parser.add_argument("--base_model", required=True, type=str, choices=['chatglm2', 'llama2', 'tinyllama'])
     parser.add_argument("--max_length", default=512, type=int)
     parser.add_argument("--batch_size", default=4, type=int, help="The train batch size per device")
     parser.add_argument("--learning_rate", default=1e-4, type=float, help="The learning rate")
@@ -196,9 +197,9 @@ if __name__ == "__main__":
     parser.add_argument("--num_epochs", default=8, type=float, help="The training epochs")
     parser.add_argument("--num_workers", default=8, type=int, help="dataloader workers")
     parser.add_argument("--log_interval", default=20, type=int)
-    parser.add_argument("--gradient_accumulation_steps", default=8, type=int)
+    parser.add_argument("--gradient_accumulation_steps", default=16, type=int)
     parser.add_argument("--warmup_ratio", default=0.05, type=float)
-    parser.add_argument("--ds_config", default='./config_new.json', type=str)
+    parser.add_argument("--ds_config", default='./ds_config_zero.json', type=str)
     parser.add_argument("--scheduler", default='linear', type=str)
     parser.add_argument("--instruct_template", default='default')
     parser.add_argument("--evaluation_strategy", default='steps', type=str)    
