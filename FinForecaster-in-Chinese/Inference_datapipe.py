@@ -1,10 +1,10 @@
 # Inference Data
 # get company news online
-from datetime import date
-import akshare as ak
-import pandas as pd
 from datetime import date, datetime, timedelta
 from Ashare_data import *
+import akshare as ak
+import pandas as pd
+import requests
 
 #default symbol
 symbol = "600519"
@@ -21,6 +21,69 @@ def n_weeks_before(date_string, n, format = "%Y%m%d"):
     
     return date.strftime(format=format)
 
+def stock_news_em(symbol: str = "300059", page = 1) -> pd.DataFrame:
+    
+    url = "https://search-api-web.eastmoney.com/search/jsonp"
+    params = {
+        "cb": "jQuery3510875346244069884_1668256937995",
+        "param": '{"uid":"",'
+        + f'"keyword":"{symbol}"'
+        + ',"type":["cmsArticleWebOld"],"client":"web","clientType":"web","clientVersion":"curr","param":{"cmsArticleWebOld":{"searchScope":"default","sort":"default",' + f'"pageIndex":{page}'+ ',"pageSize":100,"preTag":"<em>","postTag":"</em>"}}}',
+        "_": "1668256937996",
+    }
+    r = requests.get(url, params=params)
+    data_text = r.text
+    data_json = json.loads(
+        data_text.strip("jQuery3510875346244069884_1668256937995(")[:-1]
+    )
+    temp_df = pd.DataFrame(data_json["result"]["cmsArticleWebOld"])
+    temp_df.rename(
+        columns={
+            "date": "发布时间",
+            "mediaName": "文章来源",
+            "code": "-",
+            "title": "新闻标题",
+            "content": "新闻内容",
+            "url": "新闻链接",
+            "image": "-",
+        },
+        inplace=True,
+    )
+    temp_df["关键词"] = symbol
+    temp_df = temp_df[
+        [
+            "关键词",
+            "新闻标题",
+            "新闻内容",
+            "发布时间",
+            "文章来源",
+            "新闻链接",
+        ]
+    ]
+    temp_df["新闻标题"] = (
+        temp_df["新闻标题"]
+        .str.replace(r"\(<em>", "", regex=True)
+        .str.replace(r"</em>\)", "", regex=True)
+    )
+    temp_df["新闻标题"] = (
+        temp_df["新闻标题"]
+        .str.replace(r"<em>", "", regex=True)
+        .str.replace(r"</em>", "", regex=True)
+    )
+    temp_df["新闻内容"] = (
+        temp_df["新闻内容"]
+        .str.replace(r"\(<em>", "", regex=True)
+        .str.replace(r"</em>\)", "", regex=True)
+    )
+    temp_df["新闻内容"] = (
+        temp_df["新闻内容"]
+        .str.replace(r"<em>", "", regex=True)
+        .str.replace(r"</em>", "", regex=True)
+    )
+    temp_df["新闻内容"] = temp_df["新闻内容"].str.replace(r"\u3000", "", regex=True)
+    temp_df["新闻内容"] = temp_df["新闻内容"].str.replace(r"\r\n", " ", regex=True)
+    return temp_df
+
 
 def get_news(symbol, max_page = 3):
     
@@ -28,7 +91,7 @@ def get_news(symbol, max_page = 3):
     for page in range(1, max_page):
         
         try:
-            df_list.append(ak.stock_news_em(symbol, page))
+            df_list.append(stock_news_em(symbol, page))
         except KeyError:
             print(str(symbol) + "pages obtained for symbol: " + page)
             break
